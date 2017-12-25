@@ -7,6 +7,7 @@
 #
 CONFIG_LOCALVERSION="-shamu:PureZ-Kernel-4.1"
 # CONFIG_LOCALVERSION_AUTO is not set
+CONFIG_WAKE_GESTURES=y
 
 #
 # shamu Setup
