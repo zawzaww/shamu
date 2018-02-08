@@ -1,14 +1,10 @@
-#######################################################
-# Linux/arm 3.10.108 shamu PureZ Kernel Configuration #
-# Google Nexus 6 (shamu)                              #
-#######################################################
+# Linux/arm 3.10.108 shamu PureZ Kernel Configuration
+# Nexus 6 (shamu)
+#
 
-
-###############
-#             # 
-# PureZ Setup #
-#             #
-###############
+#
+# PureZ Setup
+#
 CONFIG_LOCALVERSION="-shamu:PureZ-Kernel-5.0"
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_WAKE_GESTURES=y
@@ -41,11 +37,9 @@ CONFIG_NTFS_FS=y
 # CONFIG_NTFS_DEBUG is not set
 CONFIG_NTFS_RW=y
 
-###############
-#             #
-# shamu Setup #
-#             #
-###############
+#
+# shamu Setup
+#
 CONFIG_ARM=y
 CONFIG_ARM_HAS_SG_CHAIN=y
 CONFIG_MIGHT_HAVE_PCI=y
