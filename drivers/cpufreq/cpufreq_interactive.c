@@ -123,6 +123,11 @@ struct cpufreq_interactive_tunables {
 	bool io_is_busy;
 
 	/*
+	 * Whether to align timer windows across all CPUs.
+	 */
+	bool align_windows;
+
+	/*
 	 * Stay at max freq for at least max_freq_hysteresis before dropping
 	 * frequency.
 	 */
@@ -139,9 +144,16 @@ static u64 round_to_nw_start(u64 jif,
 			     struct cpufreq_interactive_tunables *tunables)
 {
 	unsigned long step = usecs_to_jiffies(tunables->timer_rate);
+	u64 ret;
 
-	do_div(jif, step);
-	return (jif + 1) * step;
+	if (tunables->align_windows) {
+		do_div(jif, step);
+		ret = (jif + 1) * step;
+	} else {
+		ret = jiffies + usecs_to_jiffies(tunables->timer_rate);
+	}
+
+	return ret;
 }
 
 static void cpufreq_interactive_timer_resched(unsigned long cpu,
@@ -482,7 +494,8 @@ static void cpufreq_interactive_timer(unsigned long data)
 	if (new_freq == pcpu->policy->max)
 		pcpu->max_freq_hyst_start_time = now;
 
-	if (pcpu->target_freq == new_freq) {
+	if (pcpu->target_freq == new_freq &&
+			pcpu->target_freq <= pcpu->policy->cur) {
 		trace_cpufreq_interactive_already(
 			data, cpu_load, pcpu->target_freq,
 			pcpu->policy->cur, new_freq);
@@ -660,7 +673,7 @@ static int cpufreq_interactive_notifier(
 	int cpu;
 	unsigned long flags;
 
-	if (val == CPUFREQ_POSTCHANGE) {
+	if (val == CPUFREQ_PRECHANGE) {
 		pcpu = &per_cpu(cpuinfo, freq->cpu);
 		if (!down_read_trylock(&pcpu->enable_sem))
 			return 0;
@@ -804,13 +817,22 @@ static ssize_t store_above_hispeed_delay(
 	struct cpufreq_interactive_tunables *tunables,
 	const char *buf, size_t count)
 {
-	int ntokens;
+	int ntokens, i;
 	unsigned int *new_above_hispeed_delay = NULL;
 	unsigned long flags;
 
 	new_above_hispeed_delay = get_tokenized_data(buf, &ntokens);
 	if (IS_ERR(new_above_hispeed_delay))
 		return PTR_RET(new_above_hispeed_delay);
+
+	/* Make sure frequencies are in ascending order. */
+	for (i = 3; i < ntokens; i += 2) {
+		if (new_above_hispeed_delay[i] <=
+		    new_above_hispeed_delay[i - 2]) {
+			kfree(new_above_hispeed_delay);
+			return -EINVAL;
+		}
+	}
 
 	spin_lock_irqsave(&tunables->above_hispeed_delay_lock, flags);
 	if (tunables->above_hispeed_delay != default_above_hispeed_delay)
@@ -834,7 +856,7 @@ static ssize_t store_hispeed_freq(struct cpufreq_interactive_tunables *tunables,
 	int ret;
 	long unsigned int val;
 
-	ret = strict_strtoul(buf, 0, &val);
+	ret = kstrtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
 	tunables->hispeed_freq = val;
@@ -861,6 +883,7 @@ static ssize_t store_##file_name(					\
 	return count;							\
 }
 show_store_one(max_freq_hysteresis);
+show_store_one(align_windows);
 
 static ssize_t show_go_hispeed_load(struct cpufreq_interactive_tunables
 		*tunables, char *buf)
@@ -874,7 +897,7 @@ static ssize_t store_go_hispeed_load(struct cpufreq_interactive_tunables
 	int ret;
 	unsigned long val;
 
-	ret = strict_strtoul(buf, 0, &val);
+	ret = kstrtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
 	tunables->go_hispeed_load = val;
@@ -893,7 +916,7 @@ static ssize_t store_min_sample_time(struct cpufreq_interactive_tunables
 	int ret;
 	unsigned long val;
 
-	ret = strict_strtoul(buf, 0, &val);
+	ret = kstrtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
 	tunables->min_sample_time = val;
@@ -912,7 +935,7 @@ static ssize_t store_timer_rate(struct cpufreq_interactive_tunables *tunables,
 	int ret;
 	unsigned long val, val_round;
 
-	ret = strict_strtoul(buf, 0, &val);
+	ret = kstrtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
 
@@ -1080,6 +1103,7 @@ store_gov_pol_sys(boostpulse);
 show_store_gov_pol_sys(boostpulse_duration);
 show_store_gov_pol_sys(io_is_busy);
 show_store_gov_pol_sys(max_freq_hysteresis);
+show_store_gov_pol_sys(align_windows);
 
 #define gov_sys_attr_rw(_name)						\
 static struct global_attr _name##_gov_sys =				\
@@ -1104,6 +1128,7 @@ gov_sys_pol_attr_rw(boost);
 gov_sys_pol_attr_rw(boostpulse_duration);
 gov_sys_pol_attr_rw(io_is_busy);
 gov_sys_pol_attr_rw(max_freq_hysteresis);
+gov_sys_pol_attr_rw(align_windows);
 
 static struct global_attr boostpulse_gov_sys =
 	__ATTR(boostpulse, 0200, NULL, store_boostpulse_gov_sys);
@@ -1125,6 +1150,7 @@ static struct attribute *interactive_attributes_gov_sys[] = {
 	&boostpulse_duration_gov_sys.attr,
 	&io_is_busy_gov_sys.attr,
 	&max_freq_hysteresis_gov_sys.attr,
+	&align_windows_gov_sys.attr,
 	NULL,
 };
 
@@ -1147,6 +1173,7 @@ static struct attribute *interactive_attributes_gov_pol[] = {
 	&boostpulse_duration_gov_pol.attr,
 	&io_is_busy_gov_pol.attr,
 	&max_freq_hysteresis_gov_pol.attr,
+	&align_windows_gov_pol.attr,
 	NULL,
 };
 
@@ -1214,6 +1241,7 @@ static struct cpufreq_interactive_tunables *alloc_tunable(
 	tunables->timer_rate = DEFAULT_TIMER_RATE;
 	tunables->boostpulse_duration_val = DEFAULT_MIN_SAMPLE_TIME;
 	tunables->timer_slack_val = DEFAULT_TIMER_SLACK;
+	tunables->align_windows = true;
 
 	spin_lock_init(&tunables->target_loads_lock);
 	spin_lock_init(&tunables->above_hispeed_delay_lock);
