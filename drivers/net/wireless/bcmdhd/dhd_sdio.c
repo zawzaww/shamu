@@ -1005,6 +1005,10 @@ dhdsdio_clk_devsleep_iovar(dhd_bus_t *bus, bool on)
 		DHD_TRACE(("%s: clk before sleep: 0x%x\n", __FUNCTION__,
 			bcmsdh_cfg_read(bus->sdh, SDIO_FUNC_1,
 			SBSDIO_FUNC1_CHIPCLKCSR, &err)));
+
+		/* Dongle would not reponse to CMD19 in sleep so block retune */
+		bcmsdh_retune_hold(bus->sdh, TRUE);
+
 #ifdef USE_CMD14
 		err = bcmsdh_sleep(bus->sdh, TRUE);
 #else
@@ -1104,6 +1108,9 @@ dhdsdio_clk_devsleep_iovar(dhd_bus_t *bus, bool on)
 				err = BCME_NODEVICE;
 			}
 		}
+
+		/* Unblock retune */
+		bcmsdh_retune_hold(bus->sdh, FALSE);
 	}
 
 	/* Update if successful */
@@ -6584,6 +6591,7 @@ extern bool
 dhd_bus_watchdog(dhd_pub_t *dhdp)
 {
 	dhd_bus_t *bus;
+	bool ret = FALSE;
 
 	DHD_TIMER(("%s: Enter\n", __FUNCTION__));
 
@@ -6597,14 +6605,19 @@ dhd_bus_watchdog(dhd_pub_t *dhdp)
 		return FALSE;
 	}
 
+	dhd_os_sdlock(bus->dhd);
+
 	/* Ignore the timer if simulating bus down */
 	if (!SLPAUTO_ENAB(bus) && bus->sleeping)
-		return FALSE;
+		goto wd_end;
 
 	if (dhdp->busstate == DHD_BUS_DOWN)
-		return FALSE;
+		goto wd_end;
 
-	dhd_os_sdlock(bus->dhd);
+	if (!dhdp->up)
+		goto wd_end;
+
+	ret = TRUE;
 
 	/* Poll period: check device if appropriate. */
 	if (!SLPAUTO_ENAB(bus) && (bus->poll && (++bus->polltick >= bus->pollrate))) {
@@ -6706,9 +6719,10 @@ dhd_bus_watchdog(dhd_pub_t *dhdp)
 	}
 #endif /* DHD_USE_IDLECOUNT */
 
+wd_end:
 	dhd_os_sdunlock(bus->dhd);
 
-	return bus->ipend;
+	return (ret ? bus->ipend : FALSE);
 }
 
 #ifdef DHD_DEBUG
